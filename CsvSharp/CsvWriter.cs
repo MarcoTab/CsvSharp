@@ -14,6 +14,8 @@ namespace CsvSharp
 
         private CsvRecord? _header;
 
+        private bool _hasHeader = false;
+
         private bool _headerWritten;
 
         private int _recordsWritten;
@@ -36,7 +38,7 @@ namespace CsvSharp
             _header = header;
 
             if (_header != null)
-                _config.HasHeader = true;
+                _hasHeader = true;
 
             _headerWritten = false;
 
@@ -47,7 +49,7 @@ namespace CsvSharp
 
         public void WriteHeader()
         {
-            if (_header != null && !_headerWritten && _config.HasHeader)
+            if (_header != null && !_headerWritten && _hasHeader)
             {
                 _writer.WriteLine(GetLineFromCsvRecord(_header));
                 _headerWritten = true;
