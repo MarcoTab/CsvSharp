@@ -10,6 +10,7 @@ using SharpRecord = CsvSharp.CsvRecord;
 
 using HelperReader = CsvHelper.CsvReader;
 using HelperWriter = CsvHelper.CsvWriter;
+using System.Numerics;
 
 class Program
 {
@@ -33,8 +34,10 @@ class Program
         string sharpOutOne = Path.Combine(outputDir, "csvsharp_one.csv");
         string helperOutOne = Path.Combine(outputDir, "csvhelper_one.csv");
 
+        long inputBytes = new System.IO.FileInfo(inputPath).Length;
+
         Console.WriteLine("=== CSV BENCHMARK ===");
-        Console.WriteLine($"Input file : {inputPath}");
+        Console.WriteLine($"Input file : {inputPath} ({HumanReadableSize(inputBytes)})");
         Console.WriteLine($"Output dir : {outputDir}");
         Console.WriteLine($"Stress rows: {stressRows:N0}\n");
 
@@ -233,6 +236,20 @@ class Program
             $"{label,-22} | " +
             $"Time: {sw.Elapsed.TotalMilliseconds,8:N2} ms | " +
             $"Mem: {(memAfter - memBefore) / 1024.0,8:N2} KB");
+    }
+
+        public static string HumanReadableSize(long bytes)
+    {
+        const long KB = 1024;
+        const long MB = KB * 1024;
+        const long GB = MB * 1024;
+        const long TB = GB * 1024;
+
+        if (bytes >= TB) return $"{(bytes / (double)TB):0.##} TB";
+        if (bytes >= GB) return $"{(bytes / (double)GB):0.##} GB";
+        if (bytes >= MB) return $"{(bytes / (double)MB):0.##} MB";
+        if (bytes >= KB) return $"{(bytes / (double)KB):0.##} KB";
+        return $"{bytes} B";
     }
 
     static void ForceGC()

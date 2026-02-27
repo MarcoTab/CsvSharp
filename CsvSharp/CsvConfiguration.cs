@@ -35,6 +35,6 @@ namespace CsvSharp
         /// <summary>
         /// Gets or sets the character encoding.
         /// </summary>
-        public Encoding Encoding { get; set; } = new UTF8Encoding();
+        public Encoding Encoding { get; set; } = Encoding.UTF8;
     }
 }
