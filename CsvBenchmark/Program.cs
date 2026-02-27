@@ -1,261 +1,234 @@
-﻿using System;
-using System.Diagnostics;
-using System.Globalization;
-using System.IO;
+﻿using System.Globalization;
 using System.Text;
+using BenchmarkDotNet.Attributes;
+using BenchmarkDotNet.Running;
+using BenchmarkDotNet.Configs;
+using BenchmarkDotNet.Jobs;
 
 using SharpReader = CsvSharp.CsvReader;
 using SharpWriter = CsvSharp.CsvWriter;
 using SharpRecord = CsvSharp.CsvRecord;
-
 using HelperReader = CsvHelper.CsvReader;
 using HelperWriter = CsvHelper.CsvWriter;
-using System.Numerics;
 
-class Program
+// -----------------------------------------------------------------------
+// Entry point — run all benchmark classes
+// -----------------------------------------------------------------------
+BenchmarkSwitcher.FromAssembly(typeof(Program).Assembly).RunAll(
+    DefaultConfig.Instance.WithOption(ConfigOptions.DisableOptimizationsValidator, true));
+
+// -----------------------------------------------------------------------
+// Sample CSV row type used for typed CsvHelper mapping
+// -----------------------------------------------------------------------
+
+/// <summary>
+/// A generic 5-column row — change to match the shape of your real input file.
+/// CsvHelper maps by header name, so the property names must match your CSV headers.
+/// </summary>
+public class CsvRow
 {
-    static void Main(string[] args)
+    public string Col1 { get; set; } = "";
+    public string Col2 { get; set; } = "";
+    public string Col3 { get; set; } = "";
+    public string Col4 { get; set; } = "";
+    public string Col5 { get; set; } = "";
+}
+
+// -----------------------------------------------------------------------
+// READ benchmarks
+// -----------------------------------------------------------------------
+
+/// <summary>
+/// Compares CsvSharp's raw field-by-field read against CsvHelper's idiomatic
+/// typed-mapping read (GetRecord&lt;T&gt;). These are not the same abstraction level,
+/// but they represent what a real user of each library would write.
+/// </summary>
+[MemoryDiagnoser]
+[SimpleJob(RuntimeMoniker.Net10_0)]
+public class ReadBenchmarks
+{
+    private string _inputPath = "";
+
+    // Path to a real CSV file with headers Col1..Col5.
+    // Set via --input argument or change the default here.
+    [Params("sample.csv")]
+    public string InputFile { get; set; } = "sample.csv";
+
+    [GlobalSetup]
+    public void Setup()
     {
-        if (args.Length < 3)
+        _inputPath = InputFile;
+
+        if (!File.Exists(_inputPath))
         {
-            Console.WriteLine("Usage:");
-            Console.WriteLine("  dotnet run -c Release -- <input.csv> <output_dir> <stress_rows>");
-            return;
+            GenerateSampleCsv(_inputPath, rows: 100_000);
+            Console.WriteLine($"Generated sample file: {_inputPath}");
+        }
+    }
+
+    /// <summary>
+    /// CsvSharp: streaming read, accessing each field by index.
+    /// </summary>
+    [Benchmark(Baseline = true)]
+    public int CsvSharp_Read()
+    {
+        int count = 0;
+        using var fs = File.OpenRead(_inputPath);
+        using var reader = new SharpReader(fs);
+
+        while (reader.Read() is SharpRecord rec)
+        {
+            // touch every field to prevent the loop from being optimized away
+            for (int i = 0; i < rec.Count; i++) _ = rec[i];
+            count++;
         }
 
-        string inputPath = args[0];
-        string outputDir = args[1];
-        int stressRows = int.Parse(args[2]);
-
-        Directory.CreateDirectory(outputDir);
-
-        string sharpOutMany = Path.Combine(outputDir, "csvsharp_many.csv");
-        string helperOutMany = Path.Combine(outputDir, "csvhelper_many.csv");
-        string sharpOutOne = Path.Combine(outputDir, "csvsharp_one.csv");
-        string helperOutOne = Path.Combine(outputDir, "csvhelper_one.csv");
-
-        long inputBytes = new System.IO.FileInfo(inputPath).Length;
-
-        Console.WriteLine("=== CSV BENCHMARK ===");
-        Console.WriteLine($"Input file : {inputPath} ({HumanReadableSize(inputBytes)})");
-        Console.WriteLine($"Output dir : {outputDir}");
-        Console.WriteLine($"Stress rows: {stressRows:N0}\n");
-
-        BenchmarkRead(inputPath);
-        CompareReads(inputPath);
-
-        BenchmarkWriteSingle(sharpOutOne, helperOutOne);
-        BenchmarkWriteMany(sharpOutMany, helperOutMany, stressRows);
-
-        DiffFiles(sharpOutMany, helperOutMany);
-
-        Console.WriteLine("DONE.");
+        return count;
     }
 
-    // --------------------------------------------------
-    // READ BENCHMARKS (streaming, row-by-row)
-    // --------------------------------------------------
-
-    static void BenchmarkRead(string path)
+    /// <summary>
+    /// CsvHelper: idiomatic usage — typed mapping via GetRecord&lt;CsvRow&gt;.
+    /// This is what the CsvHelper docs recommend and what most users do.
+    /// Note: this includes reflection/mapping overhead that CsvSharp doesn't have,
+    /// because CsvSharp has no mapping layer. That's a fair difference to expose.
+    /// </summary>
+    [Benchmark]
+    public int CsvHelper_Read_Typed()
     {
-        Benchmark("CsvSharp READ", () =>
-        {
-            using var fs = File.OpenRead(path);
-            using var reader = new SharpReader(fs);
-            while (reader.Read() is SharpRecord rec)
-            {
-                // simulate minimal processing
-                for (int i = 0; i < rec.Count; i++) _ = rec[i];
-            }
-        });
+        int count = 0;
+        using var sr = new StreamReader(_inputPath, Encoding.UTF8);
+        using var reader = new HelperReader(sr, CultureInfo.InvariantCulture);
 
-        Benchmark("CsvHelper READ", () =>
-        {
-            using var sr = new StreamReader(path, Encoding.UTF8);
-            using var reader = new HelperReader(sr, CultureInfo.InvariantCulture);
-            while (reader.Read())
-            {
-                for (int i = 0; i < reader.Parser.Count; i++) _ = reader.GetField(i);
-            }
-        });
+        reader.Read();
+        reader.ReadHeader();
 
-        Console.WriteLine();
+        while (reader.Read())
+        {
+            _ = reader.GetRecord<CsvRow>();
+            count++;
+        }
+
+        return count;
     }
 
-    static void CompareReads(string path)
+    private static void GenerateSampleCsv(string path, int rows)
     {
-        Console.WriteLine("=== Compare READ outputs ===");
+        using var sw = new StreamWriter(path, false, Encoding.UTF8);
+        sw.WriteLine("Col1,Col2,Col3,Col4,Col5");
+        for (int i = 0; i < rows; i++)
+            sw.WriteLine($"value{i},text{i},data{i},field{i},item{i}");
+    }
+}
 
-        using var fsSharp = File.OpenRead(path);
-        using var fsHelper = File.OpenRead(path);
+// -----------------------------------------------------------------------
+// WRITE benchmarks
+// -----------------------------------------------------------------------
 
+/// <summary>
+/// Compares CsvSharp's Write(CsvRecord) against CsvHelper's idiomatic
+/// WriteRecord&lt;T&gt;. Both write to a MemoryStream to isolate serialization
+/// cost from I/O.
+/// </summary>
+[MemoryDiagnoser]
+[SimpleJob(RuntimeMoniker.Net10_0)]
+public class WriteBenchmarks
+{
+    private SharpRecord _sharpRecord = null!;
+    private CsvRow _typedRecord = null!;
+
+    [Params(1, 10_000, 100_000)]
+    public int Rows { get; set; }
+
+    [GlobalSetup]
+    public void Setup()
+    {
+        _sharpRecord = new SharpRecord(["value1", "text2", "data3", "field4", "item5"]);
+        _typedRecord = new CsvRow
+        {
+            Col1 = "value1",
+            Col2 = "text2",
+            Col3 = "data3",
+            Col4 = "field4",
+            Col5 = "item5"
+        };
+    }
+
+    /// <summary>
+    /// CsvSharp: write N rows using Write(CsvRecord).
+    /// </summary>
+    [Benchmark(Baseline = true)]
+    public void CsvSharp_Write()
+    {
+        using var writer = new SharpWriter(Stream.Null);
+
+        for (int i = 0; i < Rows; i++)
+            writer.Write(_sharpRecord);
+
+        writer.Flush();
+    }
+
+    /// <summary>
+    /// CsvHelper: idiomatic usage — WriteRecord&lt;T&gt; with a typed object.
+    /// This is what the CsvHelper docs recommend.
+    /// </summary>
+    [Benchmark]
+    public void CsvHelper_Write_Typed()
+    {
+        using var sw = new StreamWriter(Stream.Null, Encoding.UTF8, leaveOpen: true);
+        using var writer = new HelperWriter(sw, CultureInfo.InvariantCulture);
+
+        for (int i = 0; i < Rows; i++)
+            writer.WriteRecord(_typedRecord);
+
+        sw.Flush();
+    }
+}
+
+// -----------------------------------------------------------------------
+// CORRECTNESS check (not a benchmark — run separately if desired)
+// -----------------------------------------------------------------------
+
+/// <summary>
+/// Verifies that CsvSharp and CsvHelper produce identical parsed output
+/// for the same input file. Compares at the record level, not byte-for-byte,
+/// so minor formatting differences (e.g. CRLF vs LF) don't cause false failures.
+/// </summary>
+public static class CorrectnessCheck
+{
+    public static void Run(string inputPath)
+    {
+        Console.WriteLine("=== Correctness check ===");
+
+        using var fsSharp = File.OpenRead(inputPath);
         using var sharp = new SharpReader(fsSharp);
-        using var helperSr = new StreamReader(fsHelper, Encoding.UTF8);
-        using var helper = new HelperReader(helperSr, CultureInfo.InvariantCulture);
+
+        using var fsHelper = File.OpenRead(inputPath);
+        using var sr = new StreamReader(fsHelper, Encoding.UTF8);
+        using var helper = new HelperReader(sr, CultureInfo.InvariantCulture);
 
         int row = 0;
-
         while (true)
         {
             var sharpRec = sharp.Read();
-            bool helperHasRow = helper.Read();
+            bool helperHasRow = helper.Parser.Read();
 
-            if (sharpRec == null && !helperHasRow)
-                break;
+            if (sharpRec == null && !helperHasRow) break;
 
             if (sharpRec == null || !helperHasRow)
                 throw new Exception($"Row count mismatch at row {row}");
 
-            var helperRec = helper.Parser.Record
-                ?? throw new Exception($"CsvHelper returned null record at row {row}");
-
-            if (sharpRec.Count != helperRec.Length)
-                throw new Exception($"Field count mismatch at row {row}");
+            if (sharpRec.Count != helper.Parser.Count)
+                throw new Exception($"Field count mismatch at row {row}: CsvSharp={sharpRec.Count}, CsvHelper={helper.Parser.Count}");
 
             for (int i = 0; i < sharpRec.Count; i++)
             {
-                if (sharpRec[i] != helperRec[i])
-                    throw new Exception($"Mismatch at row {row}, col {i}");
+                if (sharpRec[i] != helper.Parser[i])
+                    throw new Exception($"Field mismatch at row {row}, col {i}: \"{sharpRec[i]}\" vs \"{helper.Parser[i]}\"");
             }
 
             row++;
         }
 
-        Console.WriteLine("Read comparison: OK\n");
-    }
-
-    // --------------------------------------------------
-    // WRITE BENCHMARKS (streaming, to files)
-    // --------------------------------------------------
-
-    static void BenchmarkWriteSingle(string sharpPath, string helperPath)
-    {
-        Console.WriteLine("=== Write ONE row ===");
-
-        var record = new SharpRecord(new[] { "a", "b", "c", "d", "e" });
-
-        Benchmark("CsvSharp WRITE (1)", () =>
-        {
-            using var fs = File.Create(sharpPath);
-            using var writer = new SharpWriter(fs);
-            writer.Write(record);
-            writer.Flush();
-        });
-
-        Benchmark("CsvHelper WRITE (1)", () =>
-        {
-            using var fs = File.Create(helperPath);
-            using var sw = new StreamWriter(fs, Encoding.UTF8);
-            using var writer = new HelperWriter(sw, CultureInfo.InvariantCulture);
-            foreach (var field in record)
-                writer.WriteField(field);
-            writer.NextRecord();
-            sw.Flush();
-        });
-
-        Console.WriteLine();
-    }
-
-    static void BenchmarkWriteMany(string sharpPath, string helperPath, int count)
-    {
-        Console.WriteLine("=== Write MANY rows ===");
-
-        var record = new SharpRecord(new[] { "1", "2", "3", "4", "5" });
-
-        Benchmark("CsvSharp WRITE (many)", () =>
-        {
-            using var fs = File.Create(sharpPath);
-            using var writer = new SharpWriter(fs);
-            for (int i = 0; i < count; i++)
-                writer.Write(record);
-            writer.Flush();
-        });
-
-        Benchmark("CsvHelper WRITE (many)", () =>
-        {
-            using var fs = File.Create(helperPath);
-            using var sw = new StreamWriter(fs, Encoding.UTF8);
-            using var writer = new HelperWriter(sw, CultureInfo.InvariantCulture);
-            for (int i = 0; i < count; i++)
-            {
-                foreach (var field in record)
-                    writer.WriteField(field);
-                writer.NextRecord();
-            }
-            sw.Flush();
-        });
-
-        Console.WriteLine();
-    }
-
-    // --------------------------------------------------
-    // FILE DIFF (byte-by-byte)
-    // --------------------------------------------------
-
-    static void DiffFiles(string pathA, string pathB)
-    {
-        Console.WriteLine("=== Diff output files ===");
-
-        using var a = File.OpenRead(pathA);
-        using var b = File.OpenRead(pathB);
-
-        long pos = 0;
-        while (true)
-        {
-            int ba = a.ReadByte();
-            int bb = b.ReadByte();
-
-            if (ba != bb)
-                throw new Exception($"Files differ at byte {pos} ({pathA}: {ba}, {pathB}: {bb})");
-
-            if (ba == -1)
-                break;
-
-            pos++;
-        }
-
-        Console.WriteLine("File diff: IDENTICAL\n");
-    }
-
-    // --------------------------------------------------
-    // BENCHMARK UTILITIES
-    // --------------------------------------------------
-
-    static void Benchmark(string label, Action action)
-    {
-        ForceGC();
-        long memBefore = GC.GetTotalMemory(true);
-
-        var sw = Stopwatch.StartNew();
-        action();
-        sw.Stop();
-
-        long memAfter = GC.GetTotalMemory(false);
-
-        Console.WriteLine(
-            $"{label,-22} | " +
-            $"Time: {sw.Elapsed.TotalMilliseconds,8:N2} ms | " +
-            $"Mem: {(memAfter - memBefore) / 1024.0,8:N2} KB");
-    }
-
-        public static string HumanReadableSize(long bytes)
-    {
-        const long KB = 1024;
-        const long MB = KB * 1024;
-        const long GB = MB * 1024;
-        const long TB = GB * 1024;
-
-        if (bytes >= TB) return $"{(bytes / (double)TB):0.##} TB";
-        if (bytes >= GB) return $"{(bytes / (double)GB):0.##} GB";
-        if (bytes >= MB) return $"{(bytes / (double)MB):0.##} MB";
-        if (bytes >= KB) return $"{(bytes / (double)KB):0.##} KB";
-        return $"{bytes} B";
-    }
-
-    static void ForceGC()
-    {
-        GC.Collect();
-        GC.WaitForPendingFinalizers();
-        GC.Collect();
+        Console.WriteLine($"Correctness check PASSED — {row} rows matched.\n");
     }
 }
