@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="CsvSharp.Tests/CsvSharp.Tests.csproj" />
+  <Project Path="CsvSharp/CsvSharp.csproj" />
+</Solution>
