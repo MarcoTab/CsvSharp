@@ -204,7 +204,6 @@ namespace CsvSharp
 
             EndField();
             EndRecord();
-            _recordIndex++;
             return new CsvRecord(_currentRecord);
         }
 
