@@ -13,7 +13,7 @@ namespace CsvSharp
         private CsvDialect _dialect;
 
         private CsvRecord? _header;
-
+        
         private bool _hasHeader = false;
 
         private bool _headerWritten;
