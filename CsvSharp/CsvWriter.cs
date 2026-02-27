@@ -42,7 +42,7 @@ namespace CsvSharp
 
             _headerWritten = false;
 
-            _dialect = CsvDialect.Default;
+            _dialect = _config.Dialect;
 
             _recordsWritten = 0;
         }
