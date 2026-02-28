@@ -4,6 +4,7 @@
 # Repo specific files to ignore
 */output/*
 */input/*
+*/BenchmarkDotNet.Artifacts/*
 
 # User-specific files
 *.suo
