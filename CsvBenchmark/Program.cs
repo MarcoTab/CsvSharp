@@ -12,18 +12,49 @@ using HelperReader = CsvHelper.CsvReader;
 using HelperWriter = CsvHelper.CsvWriter;
 
 // -----------------------------------------------------------------------
-// Entry point — run all benchmark classes
+// Entry point
+//
+// Usage:
+//   dotnet run -c Release                           (auto-generates sample.csv if it doesn't exist. Replace this value with an absolute path to use an arbitrary csv file)
 // -----------------------------------------------------------------------
-BenchmarkSwitcher.FromAssembly(typeof(Program).Assembly).RunAll(
-    DefaultConfig.Instance.WithOption(ConfigOptions.DisableOptimizationsValidator, true));
+
+// BenchmarkDotNet runs benchmarks in a child process with a different working
+// directory, so all paths must be absolute. We anchor the sample file to the
+// assembly directory so it is always found regardless of cwd.
+string assemblyDir = AppContext.BaseDirectory;
+string samplePath = Path.Combine(assemblyDir, "sample.csv");
+
+// Set the shared input path before BenchmarkDotNet takes over.
+// BenchmarkDotNet instantiates benchmark classes itself, so a static
+// field is the standard workaround for passing data into benchmarks.
+ReadBenchmarks.InputPath = GenerateSampleIfMissing(samplePath, rows: 100_000);
+
+var config = DefaultConfig.Instance
+    .WithOption(ConfigOptions.DisableOptimizationsValidator, true);
+
+BenchmarkSwitcher.FromAssembly(typeof(Program).Assembly).RunAll(config);
+
+static string GenerateSampleIfMissing(string path, int rows)
+{
+    if (!File.Exists(path))
+    {
+        Console.WriteLine($"No --input provided. Generating {path} with {rows:N0} rows...");
+        using var sw = new StreamWriter(path, false, Encoding.UTF8);
+        sw.WriteLine("Col1,Col2,Col3,Col4,Col5");
+        for (int i = 0; i < rows; i++)
+            sw.WriteLine($"value{i},text{i},data{i},field{i},item{i}");
+        Console.WriteLine("Done.\n");
+    }
+    return path;
+}
 
 // -----------------------------------------------------------------------
 // Sample CSV row type used for typed CsvHelper mapping
 // -----------------------------------------------------------------------
 
 /// <summary>
-/// A generic 5-column row — change to match the shape of your real input file.
-/// CsvHelper maps by header name, so the property names must match your CSV headers.
+/// Used by the write benchmark for CsvHelper's WriteRecord&lt;T&gt;().
+/// Column count should match the CsvSharp write benchmark record.
 /// </summary>
 public class CsvRow
 {
@@ -47,23 +78,18 @@ public class CsvRow
 [SimpleJob(RuntimeMoniker.Net10_0)]
 public class ReadBenchmarks
 {
-    private string _inputPath = "";
-
-    // Path to a real CSV file with headers Col1..Col5.
-    // Set via --input argument or change the default here.
-    [Params("sample.csv")]
-    public string InputFile { get; set; } = "sample.csv";
+    /// <summary>
+    /// Set by the entry point before BenchmarkDotNet runs — see top of file.
+    /// BenchmarkDotNet instantiates this class itself so we use a static field
+    /// rather than a constructor argument.
+    /// </summary>
+    public static string InputPath { get; set; } = "sample.csv";
 
     [GlobalSetup]
     public void Setup()
     {
-        _inputPath = InputFile;
-
-        if (!File.Exists(_inputPath))
-        {
-            GenerateSampleCsv(_inputPath, rows: 100_000);
-            Console.WriteLine($"Generated sample file: {_inputPath}");
-        }
+        if (!File.Exists(InputPath))
+            throw new FileNotFoundException($"Input file not found: {InputPath}");
     }
 
     /// <summary>
@@ -73,7 +99,7 @@ public class ReadBenchmarks
     public int CsvSharp_Read()
     {
         int count = 0;
-        using var fs = File.OpenRead(_inputPath);
+        using var fs = File.OpenRead(InputPath);
         using var reader = new SharpReader(fs);
 
         while (reader.Read() is SharpRecord rec)
@@ -87,36 +113,26 @@ public class ReadBenchmarks
     }
 
     /// <summary>
-    /// CsvHelper: idiomatic usage — typed mapping via GetRecord&lt;CsvRow&gt;.
-    /// This is what the CsvHelper docs recommend and what most users do.
-    /// Note: this includes reflection/mapping overhead that CsvSharp doesn't have,
-    /// because CsvSharp has no mapping layer. That's a fair difference to expose.
+    /// CsvHelper: parser-level read via reader.Parser, accessing each field by index.
+    /// This is a schema-agnostic path that works with any file, making it a fair
+    /// parser-to-parser comparison with CsvSharp. Users who need typed mapping would
+    /// use GetRecord&lt;T&gt;(), but that requires a fixed schema and adds reflection
+    /// overhead that isn't really CsvHelper's parsing cost.
     /// </summary>
     [Benchmark]
-    public int CsvHelper_Read_Typed()
+    public int CsvHelper_Read_Parser()
     {
         int count = 0;
-        using var sr = new StreamReader(_inputPath, Encoding.UTF8);
+        using var sr = new StreamReader(InputPath, Encoding.UTF8);
         using var reader = new HelperReader(sr, CultureInfo.InvariantCulture);
 
-        reader.Read();
-        reader.ReadHeader();
-
-        while (reader.Read())
+        while (reader.Parser.Read())
         {
-            _ = reader.GetRecord<CsvRow>();
+            for (int i = 0; i < reader.Parser.Count; i++) _ = reader.Parser[i];
             count++;
         }
 
         return count;
-    }
-
-    private static void GenerateSampleCsv(string path, int rows)
-    {
-        using var sw = new StreamWriter(path, false, Encoding.UTF8);
-        sw.WriteLine("Col1,Col2,Col3,Col4,Col5");
-        for (int i = 0; i < rows; i++)
-            sw.WriteLine($"value{i},text{i},data{i},field{i},item{i}");
     }
 }
 
@@ -136,7 +152,7 @@ public class WriteBenchmarks
     private SharpRecord _sharpRecord = null!;
     private CsvRow _typedRecord = null!;
 
-    [Params(1, 10_000, 100_000)]
+    [Params(10_000, 1_000_000)]
     public int Rows { get; set; }
 
     [GlobalSetup]
