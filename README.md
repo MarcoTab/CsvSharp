@@ -1,6 +1,6 @@
 # CsvSharp
 
-A minimal, no-runtime dependency CSV parsing and writing library for .NET. Built as a learning project to explore C# fundamentals — streaming I/O, interface design, and benchmarking.
+A minimal, zero-dependency CSV parsing and writing library for .NET. Built as a learning project to explore C# fundamentals — streaming I/O, interface design, and benchmarking.
 
 ## Features
 
