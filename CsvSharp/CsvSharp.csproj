@@ -1,9 +1,17 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
+    <AssemblyTitle>CsvSharp</AssemblyTitle>
+    <Description>A minimal, zero-dependency CSV parsing and writing library for .NET.</Description>
+    <Version>0.1.0</Version>
+    <Authors>Marco Tabacman</Authors>
+
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+
+    <PackageId>CsvSharp</PackageId>
+    <RepositoryUrl>https://github.com/MarcoTab/CsvSharp</RepositoryUrl>
   </PropertyGroup>
 
 </Project>
